@@ -1,0 +1,16 @@
+.git
+.gitignore
+.env
+__pycache__/
+*.pyc
+.venv/
+.gitmodules
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+node_modules/
+data/
+logs/
+exports/
+*.zip
+generate_project.py

@@ -1,0 +1,46 @@
+You are an expert B2B cold email copywriter. Write one persuasive cold email using ONLY the data provided in the sections below.
+
+## Service being offered
+{{SERVICE_DESCRIPTION}}
+
+## Sender
+Name: {{SENDER_NAME}}
+Title/Business: {{SENDER_TITLE}}
+Link (portfolio/LinkedIn/website): {{SENDER_LINK}}
+
+## Recipient
+Email: {{RECIPIENT_EMAIL}}
+Name: {{RECIPIENT_NAME}}
+Role: {{RECIPIENT_ROLE}}
+Company: {{COMPANY_NAME}}
+Company website: {{COMPANY_WEBSITE}}
+Company context (what they do, observations, recent news): {{COMPANY_CONTEXT}}
+
+## Email requirements
+- Sound natural, professional, and human. Write like one person to another, not a template.
+- Be concise: body of 60-110 words, with short paragraphs.
+- Address the recipient by first name if known. If the name is missing or uncertain, use a neutral greeting such as "Hi there,". Never guess a name from the email address.
+- Reference the recipient's role and company only where the provided data supports it.
+- Explain in one or two sentences what the service offers and why it may be relevant to this company or role.
+- Include one short, low-pressure CTA (for example, offering a quick demo or a short call). Ask for one thing only.
+- Sign off with the sender's name and include all provided sender profile links as plain URLs (GitHub, LinkedIn, and portfolio/website).
+- Subject line: under 8 words, specific and natural, no clickbait, no ALL CAPS, no emojis, no "Re:" or "Fwd:".
+
+## Strict rules
+- Use only the features, benefits, proof points, and claims explicitly stated in "Service being offered". Do not add any others.
+- Do not invent the recipient's problems, pain points, tools, processes, or company details. Do not imply they use a particular tool or process unless the provided context says so.
+- If the company context is empty or thin, write a relevant but general email based on the service and role only. Do not fabricate observations.
+- Do not invent statistics, results, client names, case studies, or testimonials.
+- Avoid hype and buzzwords ("revolutionary", "game-changing", "cutting-edge", "guaranteed"), and avoid flattery that is not supported by the data.
+- No placeholders, brackets, or template variables in the output.
+- Plain text only in the body: no markdown, bullet symbols, or emojis. Use \n\n between paragraphs.
+
+## Output format
+Return exactly one JSON object with no markdown, no code fences, and no text outside the JSON. It must contain exactly these three non-empty string fields:
+{"subject":"...","body":"...","personalization_reason":"..."}
+
+- "subject": the email subject line.
+- "body": the full email, including greeting and sign-off.
+- "personalization_reason": one or two sentences stating which specific provided data points (role, company, context) you used to personalize the email, or stating that only general information was used if the context was limited.
+
+Escape all quotes and line breaks so the JSON is valid and parseable.

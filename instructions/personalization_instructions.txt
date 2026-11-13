@@ -1,0 +1,1 @@
+Use the available recipient and company context only. Connect the offered service to the company's context only when supported by the provided details. Personalize with role, department, domain, and company description when relevant. If information is incomplete, keep the message general but still credible. Do not guess what the company needs.

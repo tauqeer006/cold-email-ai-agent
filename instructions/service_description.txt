@@ -1,0 +1,49 @@
+# SERVICE DESCRIPTION
+# Replace every [BRACKETED] value with facts you can support.
+# Delete any line you cannot verify. A blank field is better than an invented one.
+# The email generator reads this file for each draft.
+# Do NOT put credentials, API keys, passwords, or private client data here.
+
+## What the service does
+[Plain description of what you build or deliver, in 2-4 sentences.]
+
+## Services included
+- [Service 1, e.g. AI chatbots trained on a company's own documents and website]
+- [Service 2, e.g. RAG assistants that answer questions from internal documents]
+- [Service 3, e.g. Automated document generation]
+- [Service 4, e.g. Delivery as independent microservices with clean APIs]
+
+## Who it is for
+[Types of companies, industries, or roles, e.g. software companies, e-commerce stores, clinics, or support and operations teams.]
+
+## Problem it addresses
+[General problems the service solves. Keep these general. Do not claim a specific company has them.]
+
+## Practical benefits
+- [Benefit 1 you can honestly support]
+- [Benefit 2]
+- [Benefit 3]
+
+## Verified proof points (optional)
+- [Real project, result, or tool you have used, e.g. "Built a document Q&A system using LangChain and FastAPI"]
+- [Real portfolio or demo link]
+# Leave this section empty if you have no verified proof yet.
+
+## Technology (only what you actually use)
+[e.g. Python, FastAPI, LangChain, OpenAI API, vector databases, Docker]
+
+## Next step I want the recipient to take
+[One simple action, e.g. "Reply to see a short demo built from your public website content" or "Book a 15-minute call."]
+
+## Things the email must NOT claim
+- No guaranteed results, savings, or revenue numbers
+- No client names unless listed under proof points
+- No claims about the recipient's current tools or problems
+- [Add any other limits, e.g. "No pricing in first email"]
+
+## Sender details
+Name: [Your name]
+Title/business: [e.g. AI Engineer / Your business name]
+GitHub: https://github.com/tauqeer006
+LinkedIn: https://www.linkedin.com/in/tauqeer006
+Portfolio: https://tauqeer006.github.io/
