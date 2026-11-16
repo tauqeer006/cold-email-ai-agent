@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 import tempfile
 import threading
 import uuid
@@ -44,8 +45,37 @@ BATCH_FIELDS = (
 _lock = threading.RLock()
 
 
+class StorageWriteError(RuntimeError):
+    pass
+
+
 def _path(name: str) -> Path:
     return settings.DATA_DIR / name
+
+
+def _daily_batch_path() -> Path:
+    return _path(f"batches_{datetime.now().date().isoformat()}.csv")
+
+
+def _batch_paths() -> list[Path]:
+    data_dir = settings.DATA_DIR
+    paths = []
+    legacy_path = _path("batches.csv")
+    if legacy_path.exists():
+        paths.append(legacy_path)
+    if data_dir.exists():
+        for path in sorted(data_dir.glob("batches_????-??-??.csv")):
+            if re.fullmatch(r"batches_\d{4}-\d{2}-\d{2}\.csv", path.name):
+                paths.append(path)
+    return paths
+
+
+def _read_all_batch_rows() -> list[dict[str, str]]:
+    return [
+        row
+        for path in _batch_paths()
+        for row in _read_rows(path, BATCH_FIELDS)
+    ]
 
 
 def _read_rows(path: Path, fields: tuple[str, ...]) -> list[dict[str, str]]:
@@ -79,6 +109,13 @@ def _write_rows(path: Path, fields: tuple[str, ...], rows: list[dict[str, Any]])
             writer.writeheader()
             writer.writerows(rows)
         os.replace(temporary_path, path)
+    except PermissionError as exc:
+        if temporary_path and os.path.exists(temporary_path):
+            os.unlink(temporary_path)
+        raise StorageWriteError(
+            f"Could not save {path.name}. Close any program that has this CSV open and "
+            "check that the data folder is writable, then try again."
+        ) from exc
     except Exception:
         if temporary_path and os.path.exists(temporary_path):
             os.unlink(temporary_path)
@@ -102,7 +139,7 @@ def _as_bool(value: Any) -> bool:
 
 def get_used_emails() -> set[str]:
     with _lock:
-        rows = _read_rows(_path("batches.csv"), BATCH_FIELDS)
+        rows = _read_all_batch_rows()
     return {
         row["email"].strip().casefold()
         for row in rows
@@ -127,11 +164,11 @@ def create_batch(
     rows = []
     saved_recipients = []
     with _lock:
-        path = _path("batches.csv")
+        path = _daily_batch_path()
         existing = _read_rows(path, BATCH_FIELDS)
         used_emails = {
             row["email"].strip().casefold()
-            for row in existing
+            for row in _read_all_batch_rows()
             if row["email"].strip()
         }
         for recipient in recipients:
@@ -183,17 +220,17 @@ def create_batch(
 
 def claim_preview_item_for_sending(batch_id: str, item_id: str) -> dict[str, Any] | None:
     with _lock:
-        path = _path("batches.csv")
-        rows = _read_rows(path, BATCH_FIELDS)
-        for row in rows:
-            if row["batch_id"] != batch_id or row["item_id"] != item_id:
-                continue
-            if row["status"] != "drafted" or _as_bool(row["sent"]):
-                return None
-            row["status"] = "sending"
-            row["updated_at"] = _now()
-            _write_rows(path, BATCH_FIELDS, rows)
-            return dict(row)
+        for path in _batch_paths():
+            rows = _read_rows(path, BATCH_FIELDS)
+            for row in rows:
+                if row["batch_id"] != batch_id or row["item_id"] != item_id:
+                    continue
+                if row["status"] != "drafted" or _as_bool(row["sent"]):
+                    return None
+                row["status"] = "sending"
+                row["updated_at"] = _now()
+                _write_rows(path, BATCH_FIELDS, rows)
+                return dict(row)
     return None
 
 
@@ -224,7 +261,7 @@ def _batch_summary(rows: list[dict[str, str]]) -> dict[str, Any] | None:
 def get_batch(batch_id: str) -> dict[str, Any] | None:
     with _lock:
         rows = [
-            row for row in _read_rows(_path("batches.csv"), BATCH_FIELDS)
+            row for row in _read_all_batch_rows()
             if row["batch_id"] == batch_id
         ]
     summary = _batch_summary(rows)
@@ -264,7 +301,7 @@ def _public_batch_item(row: dict[str, str]) -> dict[str, Any]:
 def get_batch_rows(batch_id: str) -> list[dict[str, Any]]:
     with _lock:
         rows = [
-            row for row in _read_rows(_path("batches.csv"), BATCH_FIELDS)
+            row for row in _read_all_batch_rows()
             if row["batch_id"] == batch_id
         ]
     return [
@@ -280,7 +317,7 @@ def get_batch_rows(batch_id: str) -> list[dict[str, Any]]:
 
 def list_batches() -> list[dict[str, Any]]:
     with _lock:
-        rows = _read_rows(_path("batches.csv"), BATCH_FIELDS)
+        rows = _read_all_batch_rows()
     batches: dict[str, list[dict[str, str]]] = {}
     for row in rows:
         batches.setdefault(row["batch_id"], []).append(row)
@@ -294,39 +331,41 @@ def list_batches() -> list[dict[str, Any]]:
 
 def update_batch(batch_id: str, **updates: Any) -> bool:
     with _lock:
-        path = _path("batches.csv")
-        rows = _read_rows(path, BATCH_FIELDS)
         found = False
-        for row in rows:
-            if row["batch_id"] == batch_id:
-                for key, value in updates.items():
-                    if key in BATCH_FIELDS:
-                        row[key] = str(value if value is not None else "")
-                row["updated_at"] = _now()
-                found = True
-        if found:
-            _write_rows(path, BATCH_FIELDS, rows)
+        for path in _batch_paths():
+            rows = _read_rows(path, BATCH_FIELDS)
+            file_updated = False
+            for row in rows:
+                if row["batch_id"] == batch_id:
+                    for key, value in updates.items():
+                        if key in BATCH_FIELDS:
+                            row[key] = str(value if value is not None else "")
+                    row["updated_at"] = _now()
+                    found = True
+                    file_updated = True
+            if file_updated:
+                _write_rows(path, BATCH_FIELDS, rows)
         return found
 
 
 def update_batch_item(batch_id: str, item_id: str, **updates: Any) -> bool:
     with _lock:
-        path = _path("batches.csv")
-        rows = _read_rows(path, BATCH_FIELDS)
-        for row in rows:
-            if row["batch_id"] == batch_id and row["item_id"] == item_id:
-                for key, value in updates.items():
-                    if key in BATCH_FIELDS:
-                        row[key] = str(value if value is not None else "")
-                row["updated_at"] = _now()
-                _write_rows(path, BATCH_FIELDS, rows)
-                return True
+        for path in _batch_paths():
+            rows = _read_rows(path, BATCH_FIELDS)
+            for row in rows:
+                if row["batch_id"] == batch_id and row["item_id"] == item_id:
+                    for key, value in updates.items():
+                        if key in BATCH_FIELDS:
+                            row[key] = str(value if value is not None else "")
+                    row["updated_at"] = _now()
+                    _write_rows(path, BATCH_FIELDS, rows)
+                    return True
     return False
 
 
 def list_active_batches() -> list[str]:
     with _lock:
-        rows = _read_rows(_path("batches.csv"), BATCH_FIELDS)
+        rows = _read_all_batch_rows()
     return list(
         dict.fromkeys(
             row["batch_id"]

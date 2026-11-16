@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -16,7 +17,8 @@ from app.routers.chat import router as chat_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.exports import router as exports_router
 from app.services.batch_service import process_batch_job
-from app.storage import list_active_batches
+from app.services.hunter_service import HunterAPIError
+from app.storage import StorageWriteError, list_active_batches
 
 app = FastAPI(title="Cold Email Automation API", version="1.0.0")
 logger = logging.getLogger("cold_email.api")
@@ -28,6 +30,34 @@ app.include_router(exports_router)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.exception_handler(HunterAPIError)
+async def hunter_api_error_handler(request: Request, exc: HunterAPIError) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.warning(
+        "Hunter API request rejected request_id=%s upstream_status=%s detail=%s",
+        request_id,
+        exc.status_code,
+        exc.detail,
+    )
+    return JSONResponse(
+        status_code=502,
+        content={
+            "detail": f"Hunter.io returned HTTP {exc.status_code}: {exc.detail}",
+            "request_id": request_id,
+        },
+    )
+
+
+@app.exception_handler(StorageWriteError)
+async def storage_write_error_handler(request: Request, exc: StorageWriteError) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.error("CSV persistence failed request_id=%s detail=%s", request_id, exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": str(exc), "request_id": request_id},
+    )
 
 
 @app.middleware("http")

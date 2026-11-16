@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from app.schemas import BatchStartRequest, SendPreviewEmailRequest
 from app.services.batch_service import approve_batch_item, pause_batch, process_batch_job, resume_batch, send_approved_emails
-from app.services.hunter_service import discover_companies, discover_contacts_for_domain
+from app.services.hunter_service import HunterAPIError, discover_companies, discover_contacts_for_domain
 from app.services.ollama_service import generate_email_draft
 from app.services.smtp_service import send_email_via_smtp
 from app.storage import (
@@ -78,7 +78,7 @@ async def start_batch(payload: BatchStartRequest) -> dict[str, Any]:
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Hunter found no new email addresses; all returned addresses are already in batches.csv.",
+            detail="Hunter found no new email addresses; all returned addresses are already in the saved CSV files.",
         )
 
     batch_id = str(uuid.uuid4())
@@ -181,6 +181,8 @@ async def preview_emails(
     logger.info("Email preview Hunter lookup started request_id=%s domain=%s", request_id, domain)
     try:
         recipients = await _discover_recipients(domain, email_count)
+    except HunterAPIError:
+        raise
     except Exception:
         logger.exception("Email preview Hunter lookup failed request_id=%s domain=%s", request_id, domain)
         raise
@@ -219,7 +221,7 @@ async def preview_emails(
             "result_count": 0,
             "skipped_existing_count": skipped_existing_count,
             "batch_id": None,
-            "message": "All Hunter results were already in batches.csv; no new drafts were generated.",
+            "message": "All Hunter results were already in the saved CSV files; no new drafts were generated.",
             "emails": [],
         }
 

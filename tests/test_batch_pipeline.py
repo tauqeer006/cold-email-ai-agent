@@ -8,9 +8,20 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import app
 from app.services import batch_service, ollama_service
-from app.services.hunter_service import discover_companies, discover_contacts_for_domain
+from app.services.hunter_service import (
+    HunterAPIError,
+    discover_companies,
+    discover_contacts_for_domain,
+    search_domain,
+)
 from app.services.ollama_service import generate_email_draft
-from app.storage import create_batch, get_batch, get_batch_rows
+from app.storage import (
+    StorageWriteError,
+    create_batch,
+    get_batch,
+    get_batch_rows,
+    get_used_emails,
+)
 
 
 def test_batch_calls_hunter_for_requested_email_count(tmp_path, monkeypatch):
@@ -47,7 +58,7 @@ def test_batch_calls_hunter_for_requested_email_count(tmp_path, monkeypatch):
         assert item["recipient"]["company_name"] == "Example Co"
         assert client.get("/batches").json()[0]["batch_id"] == payload["batch_id"]
         assert not (tmp_path / "contacts.csv").exists()
-        assert (tmp_path / "batches.csv").exists()
+        assert len(list(tmp_path.glob("batches_????-??-??.csv"))) == 1
 
         export_response = client.get(f"/batches/{payload['batch_id']}/export/csv")
         assert export_response.status_code == 200
@@ -128,7 +139,7 @@ def test_get_email_preview_saves_new_company_details_and_draft_without_sending(
     hunter_discovery.assert_awaited_once_with("example.test", limit=1)
     ollama_draft.assert_awaited_once()
     smtp_send.assert_not_called()
-    assert (tmp_path / "batches.csv").exists()
+    assert len(list(tmp_path.glob("batches_????-??-??.csv"))) == 1
 
 
 def test_email_preview_skips_addresses_already_in_csv(tmp_path, monkeypatch):
@@ -138,6 +149,9 @@ def test_email_preview_skips_addresses_already_in_csv(tmp_path, monkeypatch):
         [{"email": "ari@example.test"}],
         batch_status="previewed",
         item_status="drafted",
+    )
+    list(tmp_path.glob("batches_????-??-??.csv"))[0].rename(
+        tmp_path / "batches_2020-01-01.csv"
     )
     discovered = [
         {"email": "ARI@example.test", "company_name": "Already Contacted"},
@@ -170,9 +184,101 @@ def test_email_preview_skips_addresses_already_in_csv(tmp_path, monkeypatch):
     assert repeated_response.status_code == 200
     assert repeated_response.json()["result_count"] == 0
     assert repeated_response.json()["skipped_existing_count"] == 2
-    assert "already in batches.csv" in repeated_response.json()["message"]
+    assert "already in the saved CSV files" in repeated_response.json()["message"]
     assert ollama_draft.await_count == 1
     assert len(get_batch_rows(response.json()["batch_id"])) == 1
+
+
+def test_hunter_bad_request_returns_provider_detail_as_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "DATA_DIR", tmp_path)
+    with (
+        TestClient(app) as client,
+        patch(
+            "app.routers.batches.discover_contacts_for_domain",
+            new=AsyncMock(side_effect=HunterAPIError(400, "The domain parameter is invalid.")),
+        ),
+    ):
+        response = client.get("/api/emails/preview?domain=example.test&email_count=1")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == (
+        "Hunter.io returned HTTP 400: The domain parameter is invalid."
+    )
+    assert response.json()["request_id"] == response.headers["x-request-id"]
+
+
+def test_batches_append_to_daily_file_and_track_older_dates(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "DATA_DIR", tmp_path)
+    create_batch("first-batch", [{"email": "first@example.test"}])
+    create_batch("second-batch", [{"email": "second@example.test"}])
+
+    daily_files = list(tmp_path.glob("batches_????-??-??.csv"))
+    assert len(daily_files) == 1
+    daily_files[0].rename(tmp_path / "batches_2020-01-01.csv")
+
+    saved = create_batch(
+        "third-batch",
+        [
+            {"email": "FIRST@example.test"},
+            {"email": "third@example.test"},
+        ],
+    )
+
+    assert [recipient["email"] for recipient in saved] == ["third@example.test"]
+    assert get_used_emails() == {
+        "first@example.test",
+        "second@example.test",
+        "third@example.test",
+    }
+    assert (tmp_path / "batches_2020-01-01.csv").exists()
+    assert len(list(tmp_path.glob("batches_????-??-??.csv"))) == 2
+
+
+def test_csv_permission_error_preserves_existing_data_and_explains_recovery(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "DATA_DIR", tmp_path)
+    create_batch("existing-batch", [{"email": "existing@example.test"}])
+
+    with patch("app.storage.os.replace", side_effect=PermissionError("file is locked")):
+        with pytest.raises(StorageWriteError, match="Close any program"):
+            create_batch("new-batch", [{"email": "new@example.test"}])
+
+    assert get_used_emails() == {"existing@example.test"}
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_csv_permission_error_returns_actionable_json_from_preview(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "DATA_DIR", tmp_path)
+    with (
+        TestClient(app) as client,
+        patch(
+            "app.routers.batches.discover_contacts_for_domain",
+            new=AsyncMock(return_value=[{"email": "new@example.test"}]),
+        ),
+        patch(
+            "app.routers.batches.generate_email_draft",
+            new=AsyncMock(
+                return_value={
+                    "subject": "Hello",
+                    "body": "A draft.",
+                    "personalization_reason": "Company context.",
+                }
+            ),
+        ),
+        patch(
+            "app.routers.batches.create_batch",
+            side_effect=StorageWriteError(
+                "Could not save the daily CSV. Close any program that has this CSV open."
+            ),
+        ),
+    ):
+        response = client.get("/api/emails/preview?domain=example.test&email_count=1")
+
+    assert response.status_code == 503
+    assert "Close any program" in response.json()["detail"]
+    assert response.json()["request_id"] == response.headers["x-request-id"]
 
 
 def test_send_preview_email_uses_configured_smtp_account(tmp_path, monkeypatch):
@@ -355,6 +461,40 @@ def test_hunter_domain_search_includes_company_metadata(monkeypatch, caplog):
     assert "test-api-key" in request.call_args.kwargs["headers"]["Authorization"]
     assert "person@example.test" in caplog.text
     assert "Example Corporation" in caplog.text
+
+
+def test_hunter_domain_search_preserves_bad_request_details(monkeypatch):
+    monkeypatch.setattr(settings, "HUNTER_API_KEY", "test-api-key")
+
+    class MockAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            return False
+
+        async def request(self, method, url, **kwargs):
+            return Mock(
+                status_code=400,
+                reason_phrase="Bad Request",
+                json=Mock(
+                    return_value={
+                        "errors": [
+                            {
+                                "id": "invalid_domain",
+                                "details": "The supplied domain is invalid.",
+                            }
+                        ]
+                    }
+                ),
+            )
+
+    with patch("app.services.hunter_service.httpx.AsyncClient", return_value=MockAsyncClient()):
+        with pytest.raises(HunterAPIError) as error:
+            asyncio.run(search_domain("example.test", limit=20))
+
+    assert error.value.status_code == 400
+    assert error.value.detail == "The supplied domain is invalid."
 
 
 def test_hunter_company_discovery_uses_location_and_open_job_title(monkeypatch):

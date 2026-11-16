@@ -13,6 +13,34 @@ from app.config import settings
 logger = logging.getLogger("hunter_service")
 
 
+class HunterAPIError(RuntimeError):
+    def __init__(self, status_code: int, detail: str):
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(detail)
+
+
+def _response_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    errors = payload.get("errors") if isinstance(payload, dict) else None
+    if isinstance(errors, dict):
+        errors = [errors]
+    if isinstance(errors, list):
+        details = [
+            str(error.get("details") or error.get("message") or error.get("id"))
+            for error in errors
+            if isinstance(error, dict)
+            and (error.get("details") or error.get("message") or error.get("id"))
+        ]
+        if details:
+            return "; ".join(details)[:500]
+    return response.reason_phrase or "Hunter.io rejected the request."
+
+
 def _retry_after_delay(response: httpx.Response, attempt: int) -> float:
     retry_after = response.headers.get("Retry-After")
     if retry_after:
@@ -40,23 +68,37 @@ async def _request_with_retry(method: str, url: str, **kwargs: Any) -> httpx.Res
                 (time.perf_counter() - started_at) * 1000,
             )
             if response.status_code in {401, 403}:
-                raise ValueError("Invalid Hunter.io API key or unauthorized access.")
+                raise HunterAPIError(
+                    response.status_code,
+                    "Invalid Hunter.io API key or unauthorized access.",
+                )
             if response.status_code == 429:
                 if attempt <= settings.HUNTER_MAX_RETRIES:
                     delay = _retry_after_delay(response, attempt)
                     logger.warning("Hunter API rate limit hit; retrying in %s seconds", delay)
                     await asyncio.sleep(delay)
                     continue
-                response.raise_for_status()
+                raise HunterAPIError(response.status_code, _response_error_detail(response))
             if response.status_code in {500, 502, 503, 504}:
                 if attempt <= settings.HUNTER_MAX_RETRIES:
                     delay = _retry_after_delay(response, attempt)
                     logger.warning("Hunter API transient server error; retrying in %s seconds", delay)
                     await asyncio.sleep(delay)
                     continue
-                response.raise_for_status()
+                raise HunterAPIError(
+                    response.status_code,
+                    "Hunter.io is temporarily unavailable. Please try again later.",
+                )
             if 400 <= response.status_code < 500:
-                response.raise_for_status()
+                detail = _response_error_detail(response)
+                logger.warning(
+                    "Hunter rejected request method=%s endpoint=%s status=%s detail=%s",
+                    method,
+                    endpoint,
+                    response.status_code,
+                    detail,
+                )
+                raise HunterAPIError(response.status_code, detail)
             return response
         except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError, ValueError) as exc:
             last_error = exc

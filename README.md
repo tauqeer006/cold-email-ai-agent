@@ -56,7 +56,7 @@ flowchart LR
 - **LLM:** Ollama (default model: `qwen2.5:3b`), running on the host machine
 - **Lead data:** Hunter.io API
 - **Email delivery:** SMTP
-- **Storage:** CSV (`data/batches.csv`)
+- **Storage:** Date-stamped CSV files (`data/batches_YYYY-MM-DD.csv`)
 - **Frontend:** Lightweight dashboard served by the API
 - **Deployment:** Docker Compose
 
@@ -128,6 +128,7 @@ Copy `.env.example` to `.env` and fill in your values:
 Edit `instructions/service_description.txt` with **factual** details about your service, audience, benefits, sender name, and desired call to action. The API reads this file for every draft.
 
 - Docker mounts the folder read-only, so edits take effect **without rebuilding**.
+- Keep using the `.txt` instruction files in `instructions/`; no Python instruction module is required.
 - Only include claims you can support. The generator is meant to use only what is written here.
 - Configured GitHub, LinkedIn, and portfolio URLs are added to the email signature automatically if the model omits them.
 
@@ -175,7 +176,7 @@ Open the dashboard at **http://localhost:8000/**.
 
 ## 💾 Data & Logs
 
-- **Results:** `data/batches.csv` stores Hunter results, batch status, generated drafts, and delivery results. The host `data` folder is mounted into Docker, so the file survives container recreation. The earlier SQLite database and saved-contact workflow are no longer used.
+- **Results:** `data/batches_YYYY-MM-DD.csv` stores Hunter results, batch status, generated drafts, and delivery results, using one file per day. New records for the same day are added to that day's file. Duplicate email checks include all dated files and any existing legacy `data/batches.csv`, so previously saved recipients are not processed or sent again. The host `data` folder is mounted into Docker, so files survive container recreation. The earlier SQLite database and saved-contact workflow are no longer used.
 - **App logs:** `logs/app.log` (rotated at 5 MB, with 3 backups). Failed requests include a request ID in the log and an `X-Request-ID` response header.
 - **Debug logging:** Set `LOG_LEVEL=DEBUG` in `.env` and recreate the API container to log detailed Hunter results, verification responses, Ollama drafts, and SMTP activity.
   > ⚠️ Debug logs can contain recipient details and generated email content. Protect `logs/app.log` and turn debug logging off when you are finished.
@@ -268,7 +269,7 @@ This tool can send real emails to real people. Use it responsibly:
 
 - Never commit `.env`, API keys, or SMTP passwords.
 - Ollama has no built-in authentication. Restrict access with a firewall as described above.
-- Protect `data/batches.csv` and `logs/app.log`, since they can contain recipient details and email content.
+- Protect `data/batches_*.csv` and `logs/app.log`, since they can contain recipient details and email content.
 
 ---
 
